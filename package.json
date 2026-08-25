@@ -14,6 +14,7 @@
     "e2e": "tsx scripts/e2e.ts"
   },
   "dependencies": {
+    "@zmzai/bridge-protocol": "file:../zmzai-bridge-protocol",
     "ws": "^8.18.0",
     "zod": "^3.23.8"
   },

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@zmzai/bridge-protocol':
+        specifier: file:../zmzai-bridge-protocol
+        version: file:../zmzai-bridge-protocol(zod@3.25.76)
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -192,6 +195,11 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
+  '@zmzai/bridge-protocol@file:../zmzai-bridge-protocol':
+    resolution: {directory: ../zmzai-bridge-protocol, type: directory}
+    peerDependencies:
+      zod: ^3.25.0
+
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
     engines: {node: '>=18'}
@@ -317,6 +325,10 @@ snapshots:
   '@types/ws@8.18.1':
     dependencies:
       '@types/node': 22.20.1
+
+  '@zmzai/bridge-protocol@file:../zmzai-bridge-protocol(zod@3.25.76)':
+    dependencies:
+      zod: 3.25.76
 
   esbuild@0.28.2:
     optionalDependencies:
