@@ -1,10 +1,13 @@
 /**
- * Bridge SDK —— 供 zmzai-relay / zmzai-sandbox 等云端服务调用桥接端点。
+ * Bridge SDK —— 供 zmzai-relay 等云端 Agent 后端调用桥接端点（当需要把工具执行落到用户本机时）。
+ *
+ * 执行边界：云端沙箱（zmzai-sandbox）的代码/命令在云端容器内执行，不经本桥；
+ * 本桥只服务「用户本机」能力（本机 fs / shell / notify）。
  *
  * 这是「可 vendored 的轻量客户端」：把它整文件复制到调用方仓库即可（无额外依赖，仅用 fetch）。
  * 使用方式：
  *   const bridge = new BridgeClientSdk("https://b.zmzai.cloud", process.env.BRIDGE_TOKEN);
- *   const res = await bridge.dispatchToSession(sessionId, "fs.read", { path: "~/notes.txt" });
+ *   const res = await bridge.dispatchToUser(userId, "fs.read", { path: "~/notes.txt" });
  *   if (res.ok) console.log(res.data);
  *
  * 注意：即使云端成功下发，客户端本地仍可能弹出用户审批（fs.write / shell.exec 必审），
@@ -71,6 +74,20 @@ export class BridgeClientSdk {
     }
   }
 
+  /** 按用户下发（生产主入口）：路由到该用户当前在线的桌面客户端 */
+  async dispatchToUser(
+    userId: string,
+    tool: ToolName,
+    params: unknown,
+    opts: DispatchOptions = {},
+  ): Promise<DispatchResult> {
+    return this.post(
+      `/v1/users/${encodeURIComponent(userId)}/tool`,
+      { id: opts.id, tool, params, risk: opts.risk },
+      opts.timeoutMs,
+    );
+  }
+
   async dispatchToSession(
     sessionId: string,
     tool: ToolName,
@@ -102,6 +119,15 @@ export class BridgeClientSdk {
       headers: { authorization: `Bearer ${this.token}` },
     });
     return (await res.json()) as { clients: unknown[] };
+  }
+
+  /** 查询用户当前绑定的客户端状态（404 = 未绑定在线客户端） */
+  async getUserClient(userId: string): Promise<Record<string, unknown> | null> {
+    const res = await fetch(`${this.baseUrl}/v1/users/${encodeURIComponent(userId)}`, {
+      headers: { authorization: `Bearer ${this.token}` },
+    });
+    if (res.status === 404) return null;
+    return (await res.json()) as Record<string, unknown>;
   }
 
   async listSessions(): Promise<{ sessions: { sessionId: string; clientId: string }[] }> {

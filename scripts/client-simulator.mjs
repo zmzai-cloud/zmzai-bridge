@@ -2,7 +2,7 @@
  * 客户端仿真器（手动联调用）：模拟桌面客户端连上真实桥接服务，
  * 自动批准工具请求并执行（fs.read/fs.write 真实读写，shell.exec 真实执行，notify 仅打印）。
  * 运行：先 `pnpm dev` 起桥接，再 `node scripts/client-simulator.mjs`
- * 可用环境变量：PORT / BRIDGE_PATH / CLIENT_ID / CLIENT_SECRET
+ * 可用环境变量：PORT / BRIDGE_PATH / CLIENT_ID / CLIENT_SECRET / USER_ID
  */
 import { WebSocket } from "ws";
 import { createHmac } from "node:crypto";
@@ -16,6 +16,7 @@ const PORT = process.env.PORT ?? "8787";
 const BRIDGE_PATH = process.env.BRIDGE_PATH ?? "/bridge";
 const CLIENT_ID = process.env.CLIENT_ID ?? "demo-client";
 const CLIENT_SECRET = process.env.CLIENT_SECRET ?? "demo-secret";
+const USER_ID = process.env.USER_ID ?? "demo-user";
 
 const execAsync = promisify(exec);
 const expand = (p) => (p.startsWith("~") ? resolve(homedir(), p.slice(1)) : p);
@@ -27,13 +28,16 @@ ws.on("open", () => {
   ws.send(
     JSON.stringify({
       kind: "hello",
-      v: 1,
+      v: 2,
       clientId: CLIENT_ID,
+      userId: USER_ID,
       ts,
-      signature: createHmac("sha256", CLIENT_SECRET).update(`${CLIENT_ID}:${ts}`).digest("hex"),
+      signature: createHmac("sha256", CLIENT_SECRET)
+        .update(`${CLIENT_ID}:${USER_ID}:${ts}`)
+        .digest("hex"),
     }),
   );
-  console.log(`[sim-client] 已发送 hello (clientId=${CLIENT_ID})`);
+  console.log(`[sim-client] 已发送 hello (clientId=${CLIENT_ID}, userId=${USER_ID})`);
 });
 
 ws.on("message", async (raw) => {
@@ -88,7 +92,7 @@ ws.on("message", async (raw) => {
       summary: `sim ${msg.tool}`,
     };
     ws.send(
-      JSON.stringify({ kind: "tool_result", v: 1, id: msg.id, ok, data, error, audit }),
+      JSON.stringify({ kind: "tool_result", v: 2, id: msg.id, ok, data, error, audit }),
     );
     console.log(`[sim-client] 已回传结果 ok=${ok}`);
   }

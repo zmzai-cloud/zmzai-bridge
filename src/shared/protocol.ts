@@ -6,13 +6,14 @@
  *
  * 关键约定：
  * - 客户端主动建立【出站】WebSocket 到云端 /bridge，云端经此下发工具请求（反向隧道）。
- * - 握手：客户端发 hello{HMAC(clientSecret, clientId:ts)}；云端校验后用同一密钥签 welcome。
+ * - 握手：客户端发 hello{HMAC(clientSecret, clientId:userId:ts)}，userId 声明本机归属用户；
+ *   云端校验后用同一密钥签 welcome，并在 welcome 中回显 userId 与分配的 sessionId。
  * - 云端发 tool_request{id, tool, params, risk}；客户端回 tool_result{id, ok, data?, error?, audit}，
  *   其中 id 全程透传，便于云端把结果关联回发起请求的 Agent。
  */
 import { z } from "zod";
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 /** 本地可向云端暴露的能力 */
 export const ToolName = z.enum(["fs.read", "fs.write", "shell.exec", "notify"]);
@@ -68,6 +69,8 @@ export const Envelope = z.discriminatedUnion("kind", [
     kind: z.literal("hello"),
     v: z.literal(PROTOCOL_VERSION),
     clientId: z.string().min(1),
+    /** 本机归属的用户标识（被签名覆盖，防篡改）；云端据此把 Agent 请求路由到本机 */
+    userId: z.string().min(1),
     ts: z.number().int().positive(),
     signature: z.string().min(1),
   }),
@@ -75,6 +78,8 @@ export const Envelope = z.discriminatedUnion("kind", [
     kind: z.literal("welcome"),
     v: z.literal(PROTOCOL_VERSION),
     sessionId: z.string().min(1),
+    /** 回显绑定结果，供客户端确认归属 */
+    userId: z.string().min(1),
     ts: z.number().int().positive(),
     signature: z.string().min(1),
   }),

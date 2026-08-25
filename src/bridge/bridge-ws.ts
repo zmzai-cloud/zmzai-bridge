@@ -76,7 +76,14 @@ export function attachBridgeWs(
             ws.close(4001, "unknown client");
             return;
           }
-          const v = verifyHello(env.clientId, env.ts, env.signature, secret, config.helloMaxAgeMs);
+          const v = verifyHello(
+            env.clientId,
+            env.userId,
+            env.ts,
+            env.signature,
+            secret,
+            config.helloMaxAgeMs,
+          );
           if (!v.ok) {
             console.warn(`[bridge] hello 校验失败 (${env.clientId}): ${v.reason}`);
             ws.close(4003, v.reason);
@@ -85,11 +92,22 @@ export function attachBridgeWs(
           clientId = env.clientId;
           authed = true;
           clearTimeout(helloTimer);
-          const sessionId = registry.register(clientId, ws);
+          const sessionId = registry.register(clientId, env.userId, ws);
           const ts = Date.now();
           const signature = signWelcome(sessionId, ts, secret);
-          ws.send(JSON.stringify({ kind: "welcome", v: 1, sessionId, ts, signature }));
-          console.log(`[bridge] 客户端已连接 clientId=${clientId} session=${sessionId}`);
+          ws.send(
+            JSON.stringify({
+              kind: "welcome",
+              v: 2,
+              sessionId,
+              userId: env.userId,
+              ts,
+              signature,
+            }),
+          );
+          console.log(
+            `[bridge] 客户端已连接 clientId=${clientId} userId=${env.userId} session=${sessionId}`,
+          );
           break;
         }
         case "pong":

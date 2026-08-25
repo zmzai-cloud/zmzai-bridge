@@ -52,9 +52,13 @@ function statusForError(e: DispatchError): number {
  * 内部 Agent 调度 API（与 WebSocket 共用同一端口）。
  *
  * 鉴权：Bearer INTERNAL_API_TOKEN。ALLOW_INSECURE_LOCAL=true 时跳过（仅本机联调）。
- * 调用方：zmzai-relay / zmzai-sandbox 的后端服务，当需要把某次工具执行落到用户本机时，
- * 调用 POST /v1/sessions/:sessionId/tool，云端把请求经反向隧道下发到桌面客户端，
- * 等其执行（含本地审批）后把 tool_result 回传，作为 HTTP 响应返回。
+ * 调用方：zmzai-relay 等云端 Agent 后端，当需要把某次工具执行落到用户本机时，
+ * 调用 POST /v1/users/:userId/tool（生产主入口），云端按 userId 路由到该用户当前
+ * 在线的桌面客户端，经反向隧道下发，等其执行（含本地审批）后把 tool_result 回传，
+ * 作为 HTTP 响应返回。
+ *
+ * 执行边界：云端沙箱（zmzai-sandbox）在云端容器内执行，不经过本桥；
+ * 本桥只服务「用户本机」能力。
  */
 export function attachApi(
   server: Server,
@@ -85,6 +89,7 @@ export function attachApi(
         return sendJson(res, 200, {
           clients: registry.listClients().map((c) => ({
             clientId: c.clientId,
+            userId: c.userId,
             sessionId: c.sessionId,
             connectedAt: c.connectedAt,
             lastSeen: c.lastSeen,
@@ -95,6 +100,34 @@ export function attachApi(
       // 列出会话
       if (req.method === "GET" && p === "/v1/sessions") {
         return sendJson(res, 200, { sessions: registry.listSessions() });
+      }
+
+      // 查询用户当前绑定的客户端：GET /v1/users/:userId
+      const userGetMatch = p.match(/^\/v1\/users\/([^/]+)$/);
+      if (req.method === "GET" && userGetMatch) {
+        const userId = decodeURIComponent(userGetMatch[1]);
+        const clientId = registry.getClientIdByUser(userId);
+        if (!clientId) {
+          return sendJson(res, 404, { error: "user_not_bound", message: `用户 ${userId} 未绑定在线客户端` });
+        }
+        const conn = registry.listClients().find((c) => c.clientId === clientId);
+        return sendJson(res, 200, {
+          userId,
+          clientId,
+          sessionId: conn?.sessionId,
+          connectedAt: conn?.connectedAt,
+          lastSeen: conn?.lastSeen,
+        });
+      }
+
+      // 按用户下发工具请求：POST /v1/users/:userId/tool（生产主入口）
+      const userMatch = p.match(/^\/v1\/users\/([^/]+)\/tool$/);
+      if (req.method === "POST" && userMatch) {
+        const userId = decodeURIComponent(userMatch[1]);
+        const body = await readBody(req);
+        const json = body ? (JSON.parse(body) as JsonBody) : {};
+        const result = await doDispatch(registry, "user", userId, json);
+        return sendJson(res, 200, result);
       }
 
       // 向 session 下发工具请求：POST /v1/sessions/:sessionId/tool
@@ -130,7 +163,7 @@ export function attachApi(
 
 async function doDispatch(
   registry: ClientRegistry,
-  target: "session" | "client",
+  target: "session" | "client" | "user",
   id: string,
   json: JsonBody,
 ): Promise<unknown> {
@@ -151,5 +184,6 @@ async function doDispatch(
   };
 
   if (target === "session") return registry.dispatchToSession(id, req);
+  if (target === "user") return registry.dispatchToUser(id, req);
   return registry.dispatchToClient(id, req);
 }

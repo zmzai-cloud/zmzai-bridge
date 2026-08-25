@@ -4,6 +4,8 @@ import type { AuditRecord, RiskLevel, ToolName } from "../shared/protocol.js";
 
 export interface ClientConn {
   clientId: string;
+  /** 客户端 hello 中声明的归属用户（被签名覆盖） */
+  userId: string;
   ws: WebSocket;
   sessionId: string;
   connectedAt: number;
@@ -48,21 +50,28 @@ type Pending = {
 export class ClientRegistry {
   private clients = new Map<string, ClientConn>();
   private sessions = new Map<string, string>(); // sessionId -> clientId
+  private users = new Map<string, string>(); // userId -> clientId（一个用户当前在线的客户端，最新生效）
   private pending = new Map<string, Pending>();
 
   constructor(private dispatchTimeoutMs: number) {}
 
-  /** 客户端完成握手后注册，返回分配的 sessionId */
-  register(clientId: string, ws: WebSocket): string {
+  /** 客户端完成握手后注册，返回分配的 sessionId；userId 建立用户绑定（最新连接覆盖旧绑定） */
+  register(clientId: string, userId: string, ws: WebSocket): string {
     const sessionId = randomUUID();
     this.clients.set(clientId, {
       clientId,
+      userId,
       ws,
       sessionId,
       connectedAt: Date.now(),
       lastSeen: Date.now(),
     });
     this.sessions.set(sessionId, clientId);
+    const prev = this.users.get(userId);
+    if (prev && prev !== clientId) {
+      console.log(`[bridge] 用户 ${userId} 的绑定从 ${prev} 切换到 ${clientId}`);
+    }
+    this.users.set(userId, clientId);
     return sessionId;
   }
 
@@ -71,6 +80,10 @@ export class ClientRegistry {
     if (!conn) return;
     this.clients.delete(clientId);
     this.sessions.delete(conn.sessionId);
+    // 仅当该 userId 仍指向本 clientId 时才清除绑定（避免误删新连接的绑定）
+    if (this.users.get(conn.userId) === clientId) {
+      this.users.delete(conn.userId);
+    }
     // 该客户端上所有未决请求判为离线
     for (const [id, p] of this.pending) {
       if (p.clientId !== clientId) continue;
@@ -97,6 +110,13 @@ export class ClientRegistry {
     return this.sessions.get(sessionId);
   }
 
+  /** 查询某用户当前在线的客户端（未绑定 / 离线返回 undefined） */
+  getClientIdByUser(userId: string): string | undefined {
+    const clientId = this.users.get(userId);
+    if (!clientId) return undefined;
+    return this.clients.has(clientId) ? clientId : undefined;
+  }
+
   listClients(): ClientConn[] {
     return [...this.clients.values()];
   }
@@ -117,9 +137,20 @@ export class ClientRegistry {
     return this.dispatchToClient(clientId, req);
   }
 
+  /** 按用户路由（生产主入口）：下发到该用户当前在线的客户端 */
+  async dispatchToUser(userId: string, req: DispatchRequest): Promise<DispatchResult> {
+    const clientId = this.getClientIdByUser(userId);
+    if (!clientId) {
+      throw {
+        code: "client_offline",
+        message: `用户 ${userId} 当前没有在线的桌面客户端`,
+      } as DispatchError;
+    }
+    return this.dispatchToClient(clientId, req);
+  }
+
   /** 向指定 clientId 的活跃 session 下发工具请求 */
-  async dispatchToClient(clientId: string, req: DispatchRequest): Promise<DispatchResult> {
-    const conn = this.clients.get(clientId);
+  async dispatchToClient(clientId: string, req: DispatchRequest): Promise<DispatchResult> {    const conn = this.clients.get(clientId);
     if (!conn) {
       throw { code: "client_offline", message: `客户端 ${clientId} 未连接` } as DispatchError;
     }

@@ -3,7 +3,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 /**
  * 握手签名 / 校验（云端侧）。
  *
- * 客户端用 CLIENT_SECRET 对 `${clientId}:${ts}` 做 HMAC-SHA256；云端用同一密钥校验。
+ * 客户端用 CLIENT_SECRET 对 `${clientId}:${userId}:${ts}` 做 HMAC-SHA256；云端用同一密钥校验。
+ * userId 被签名覆盖，防止中间人篡改「本机归属用户」的声明。
  * welcome 用同一密钥对 `${sessionId}:${ts}` 签名（客户端当前未强制验签，预留升级空间）。
  *
  * 生产化建议（见 README）：升级为非对称签名 —— 客户端持有云端公钥验签 welcome，
@@ -21,9 +22,10 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-/** 校验客户端 hello 签名，并拒绝过期（防重放） */
+/** 校验客户端 hello 签名（覆盖 clientId + userId），并拒绝过期（防重放） */
 export function verifyHello(
   clientId: string,
+  userId: string,
   ts: number,
   signature: string,
   secret: string,
@@ -33,7 +35,7 @@ export function verifyHello(
   if (Math.abs(now - ts) > maxAgeMs) {
     return { ok: false, reason: "hello timestamp 过期（疑似重放）" };
   }
-  const expected = sign(`${clientId}:${ts}`, secret);
+  const expected = sign(`${clientId}:${userId}:${ts}`, secret);
   if (!safeEqual(expected, signature)) {
     return { ok: false, reason: "hello 签名校验失败" };
   }

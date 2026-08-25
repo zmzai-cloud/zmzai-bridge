@@ -14,6 +14,7 @@ import { sign } from "../src/bridge/sign.js";
 
 const CLIENT_ID = "e2e-client";
 const CLIENT_SECRET = "e2e-secret";
+const USER_ID = "e2e-user";
 const PORT = 8799;
 
 process.env.ALLOW_INSECURE_LOCAL = "true";
@@ -53,10 +54,11 @@ async function main(): Promise<void> {
       ws.send(
         JSON.stringify({
           kind: "hello",
-          v: 1,
+          v: 2,
           clientId: CLIENT_ID,
+          userId: USER_ID,
           ts,
-          signature: sign(`${CLIENT_ID}:${ts}`, CLIENT_SECRET),
+          signature: sign(`${CLIENT_ID}:${USER_ID}:${ts}`, CLIENT_SECRET),
         }),
       );
     });
@@ -82,7 +84,7 @@ async function main(): Promise<void> {
         ws.send(
           JSON.stringify({
             kind: "tool_result",
-            v: 1,
+            v: 2,
             id: msg.id,
             ok: true,
             data: { echoed: msg.tool, params: msg.params },
@@ -119,14 +121,50 @@ async function main(): Promise<void> {
   assert(r2.status === 200, "返回 200");
   assert(j2.ok === true && j2.data.echoed === "fs.read", "回传 data 正确关联");
 
-  // ---- 测试 3：向离线客户端下发应得 409 ----
-  console.log("[e2e] 测试3: 向离线 client 下发");
-  const r3 = await fetch(`http://localhost:${PORT}/v1/clients/nobody/tool`, {
+  // ---- 测试 3：按 userId 下发（生产主入口）----
+  console.log("[e2e] 测试3: POST /v1/users/e2e-user/tool (notify)");
+  const r3 = await fetch(`http://localhost:${PORT}/v1/users/${USER_ID}/tool`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tool: "notify", params: { title: "hi", body: "by user" } }),
+  });
+  const j3 = (await r3.json()) as { ok: boolean };
+  assert(r3.status === 200 && j3.ok === true, "按 userId 下发成功");
+
+  // ---- 测试 4：查询用户绑定 ----
+  console.log("[e2e] 测试4: GET /v1/users/e2e-user");
+  const r4 = await fetch(`http://localhost:${PORT}/v1/users/${USER_ID}`);
+  const j4 = (await r4.json()) as { clientId: string; sessionId: string };
+  assert(r4.status === 200, "用户绑定查询 200");
+  assert(j4.clientId === CLIENT_ID, "绑定到正确 clientId");
+
+  // ---- 测试 5：clients 列表含 userId ----
+  console.log("[e2e] 测试5: GET /v1/clients 含 userId");
+  const r5 = await fetch(`http://localhost:${PORT}/v1/clients`);
+  const j5 = (await r5.json()) as { clients: { clientId: string; userId: string }[] };
+  assert(r5.status === 200, "clients 列表 200");
+  assert(
+    j5.clients.some((c) => c.clientId === CLIENT_ID && c.userId === USER_ID),
+    "列表中包含 userId",
+  );
+
+  // ---- 测试 6：向离线客户端下发应得 409 ----
+  console.log("[e2e] 测试6: 向离线 client 下发");
+  const r6 = await fetch(`http://localhost:${PORT}/v1/clients/nobody/tool`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ tool: "notify", params: { title: "x", body: "y" } }),
   });
-  assert(r3.status === 409, "返回 409 client_offline");
+  assert(r6.status === 409, "返回 409 client_offline");
+
+  // ---- 测试 7：未绑定用户下发应得 409 ----
+  console.log("[e2e] 测试7: 向未绑定的 userId 下发");
+  const r7 = await fetch(`http://localhost:${PORT}/v1/users/nobody-user/tool`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tool: "notify", params: { title: "x", body: "y" } }),
+  });
+  assert(r7.status === 409, "未绑定用户返回 409");
 
   server.close();
   console.log("\n[e2e] 全部通过 ✅");

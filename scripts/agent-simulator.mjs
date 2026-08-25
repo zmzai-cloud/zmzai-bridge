@@ -5,6 +5,7 @@
  * 用法：
  *   node scripts/agent-simulator.mjs <clientId> <tool> '<jsonParams>'
  *   node scripts/agent-simulator.mjs --session <sessionId> <tool> '<jsonParams>'
+ *   node scripts/agent-simulator.mjs --user <userId> <tool> '<jsonParams>'   # 生产主入口：按用户下发
  * 环境变量：PORT / INTERNAL_API_TOKEN
  */
 const PORT = process.env.PORT ?? "8787";
@@ -16,8 +17,8 @@ let clientOrSession = "demo-client";
 let tool = "notify";
 let params = { title: "Hello", body: "from agent-sim" };
 
-if (args[0] === "--session") {
-  target = "session";
+if (args[0] === "--session" || args[0] === "--user") {
+  target = args[0].slice(2);
   clientOrSession = args[1];
   tool = args[2] ?? tool;
   if (args[3]) params = JSON.parse(args[3]);
@@ -31,7 +32,9 @@ const base = `http://localhost:${PORT}`;
 const path =
   target === "session"
     ? `/v1/sessions/${encodeURIComponent(clientOrSession)}/tool`
-    : `/v1/clients/${encodeURIComponent(clientOrSession)}/tool`;
+    : target === "user"
+      ? `/v1/users/${encodeURIComponent(clientOrSession)}/tool`
+      : `/v1/clients/${encodeURIComponent(clientOrSession)}/tool`;
 
 console.log(`[sim-agent] POST ${base}${path}  tool=${tool}`);
 const res = await fetch(`${base}${path}`, {
