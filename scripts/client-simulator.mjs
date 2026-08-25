@@ -5,7 +5,7 @@
  * 可用环境变量：PORT / BRIDGE_PATH / CLIENT_ID / CLIENT_SECRET / USER_ID
  */
 import { WebSocket } from "ws";
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -25,15 +25,17 @@ const ws = new WebSocket(`ws://localhost:${PORT}${BRIDGE_PATH}`);
 
 ws.on("open", () => {
   const ts = Date.now();
+  const nonce = randomBytes(16).toString("hex");
   ws.send(
     JSON.stringify({
       kind: "hello",
-      v: 2,
+      v: 3,
       clientId: CLIENT_ID,
       userId: USER_ID,
+      nonce,
       ts,
       signature: createHmac("sha256", CLIENT_SECRET)
-        .update(`${CLIENT_ID}:${USER_ID}:${ts}`)
+        .update(`${CLIENT_ID}:${USER_ID}:${nonce}:${ts}`)
         .digest("hex"),
     }),
   );
@@ -43,11 +45,11 @@ ws.on("open", () => {
 ws.on("message", async (raw) => {
   const msg = JSON.parse(raw.toString());
   if (msg.kind === "welcome") {
-    console.log(`[sim-client] 已连接，session=${msg.sessionId}`);
+    console.log(`[sim-client] 已连接，session=${msg.sessionId} userId=${msg.userId}`);
     return;
   }
   if (msg.kind === "ping") {
-    ws.send(JSON.stringify({ kind: "pong", v: 1, ts: Date.now() }));
+    ws.send(JSON.stringify({ kind: "pong", v: 3, ts: Date.now() }));
     return;
   }
   if (msg.kind === "tool_request") {
@@ -92,7 +94,7 @@ ws.on("message", async (raw) => {
       summary: `sim ${msg.tool}`,
     };
     ws.send(
-      JSON.stringify({ kind: "tool_result", v: 2, id: msg.id, ok, data, error, audit }),
+      JSON.stringify({ kind: "tool_result", v: 3, id: msg.id, ok, data, error, audit }),
     );
     console.log(`[sim-client] 已回传结果 ok=${ok}`);
   }

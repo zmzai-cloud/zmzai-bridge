@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import type { AuditRecord, RiskLevel, ToolName } from "../shared/protocol.js";
+import { PROTOCOL_VERSION } from "../shared/protocol.js";
 
 export interface ClientConn {
   clientId: string;
@@ -170,7 +171,7 @@ export class ClientRegistry {
 
       const envelope = {
         kind: "tool_request",
-        v: 1,
+        v: PROTOCOL_VERSION,
         id,
         tool: req.tool,
         params: req.params,

@@ -45,6 +45,8 @@ export interface BridgeConfig {
   clientSecretsJson: string;
   helloMaxAgeMs: number;
   dispatchTimeoutMs: number;
+  /** ECDSA(P-256) 私钥 PEM，用于签 welcome（防伪造云端端点）。缺省退化 HMAC（仅本机联调）。 */
+  signingPrivateKeyPem: string | null;
 }
 
 export function loadConfig(envFile = ".env"): BridgeConfig {
@@ -60,5 +62,6 @@ export function loadConfig(envFile = ".env"): BridgeConfig {
     clientSecretsJson: get("CLIENT_SECRETS", '{"demo-client":"demo-secret"}'),
     helloMaxAgeMs: int(get("HELLO_MAX_AGE_MS", "300000"), 300_000),
     dispatchTimeoutMs: int(get("DISPATCH_TIMEOUT_MS", "120000"), 120_000),
+    signingPrivateKeyPem: get("BRIDGE_SIGNING_PRIVATE_KEY_PEM", "") || null,
   };
 }

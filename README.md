@@ -39,6 +39,7 @@ zmzai-bridge/
 ├─ scripts/
 │  ├─ client-simulator.mjs   # 仿真桌面客户端（手动联调）
 │  ├─ agent-simulator.mjs    # 仿真 Agent 调用（手动联调）
+│  ├─ generate-keypair.mjs   # 生成握手 ECDSA 密钥对（私钥→bridge，公钥→client）
 │  └─ e2e.ts                 # 自包含端到端测试（无需 Electron）
 └─ package.json
 ```
@@ -124,8 +125,8 @@ pnpm e2e
 
 ## 安全模型
 
-- **握手**：客户端用 `CLIENT_SECRET` 对 `clientId:userId:ts` 做 HMAC；桥接校验签名 + 时间戳（拒绝 `>HELLO_MAX_AGE_MS` 的重放）。`userId` 被签名覆盖，防中间人篡改归属。
-- **welcome 签名**：桥接用同一密钥对 `sessionId:ts` 签名（预留升级为云端私钥 + 客户端公钥验签）。
+- **握手**：客户端用 `CLIENT_SECRET` 对 `clientId:userId:nonce:ts` 做 HMAC；桥接校验签名 + 时间戳（拒绝 `>HELLO_MAX_AGE_MS` 的重放）。`userId` 与一次性 `nonce` 均被签名覆盖，防中间人篡改归属与 welcome 重放。
+- **welcome 签名（非对称）**：配置 `BRIDGE_SIGNING_PRIVATE_KEY_PEM`（ECDSA P-256）后，welcome 用私钥对 `sessionId:userId:nonce:ts` 签名；客户端用预置的云端公钥验签——即使握手密钥泄露，也无法伪造云端端点。未配置私钥时退化 HMAC（仅限本机联调）。生成密钥对：`node scripts/generate-keypair.mjs`。
 - **密钥存储**：当前从 `CLIENT_SECRETS` env 读取，生产应改为对接 relay 的 apikey / 密钥管理服务（实现 `SecretStore` 接口）。
 - **内部 API**：Bearer Token 鉴权；仅限内部网络可达（前置网关 / VPC）。
 - **本地审批不可绕过**：见上方安全模型说明。
@@ -135,7 +136,7 @@ pnpm e2e
 ## 生产化待办
 
 - [ ] 多副本横向扩展：用 Redis 存 registry，dispatch 时定向转发到持有该 session 的实例。
-- [ ] 非对称握手：云端私钥签 welcome，客户端预置云端公钥验签（防伪造云端端点）。
+- [x] 非对称握手：云端私钥签 welcome（ECDSA P-256），客户端预置云端公钥验签（防伪造云端端点）。
 - [ ] 客户端密钥对接 relay apikey 体系，支持用户自助创建/吊销桥接密钥。
 - [x] 客户端声明归属 `userId`（hello 携带、签名覆盖）→ 云端按用户路由（`/v1/users/:userId/tool`）。
 - [ ] 与 relay 用户会话打通：relay 在用户登录时把 `userId ↔ agent 会话` 关联，需要本机能力时调用 `dispatchToUser`。

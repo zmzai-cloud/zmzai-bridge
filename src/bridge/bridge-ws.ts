@@ -1,6 +1,6 @@
 import { WebSocketServer, type WebSocket } from "ws";
-import { Envelope } from "../shared/protocol.js";
-import { signWelcome, verifyHello } from "./sign.js";
+import { Envelope, PROTOCOL_VERSION } from "../shared/protocol.js";
+import { signWelcome, signWelcomeECDSA, verifyHello } from "./sign.js";
 import { ClientRegistry } from "./registry.js";
 import { SecretStore } from "./secrets.js";
 import type { BridgeConfig } from "../config.js";
@@ -79,6 +79,7 @@ export function attachBridgeWs(
           const v = verifyHello(
             env.clientId,
             env.userId,
+            env.nonce,
             env.ts,
             env.signature,
             secret,
@@ -94,19 +95,24 @@ export function attachBridgeWs(
           clearTimeout(helloTimer);
           const sessionId = registry.register(clientId, env.userId, ws);
           const ts = Date.now();
-          const signature = signWelcome(sessionId, ts, secret);
+          // 生产：ECDSA 私钥签 welcome（防伪造云端端点）；未配置私钥时退化 HMAC（本机联调）。
+          const signature = config.signingPrivateKeyPem
+            ? signWelcomeECDSA(sessionId, env.userId, env.nonce, ts, config.signingPrivateKeyPem)
+            : signWelcome(sessionId, env.userId, env.nonce, ts, secret);
           ws.send(
             JSON.stringify({
               kind: "welcome",
-              v: 2,
+              v: 3,
               sessionId,
               userId: env.userId,
+              nonce: env.nonce,
               ts,
               signature,
             }),
           );
           console.log(
-            `[bridge] 客户端已连接 clientId=${clientId} userId=${env.userId} session=${sessionId}`,
+            `[bridge] 客户端已连接 clientId=${clientId} userId=${env.userId} session=${sessionId} ` +
+              (config.signingPrivateKeyPem ? "(welcome=ECDSA)" : "(welcome=HMAC dev)"),
           );
           break;
         }
@@ -114,7 +120,7 @@ export function attachBridgeWs(
           lastPong = Date.now();
           break;
         case "ping":
-          ws.send(JSON.stringify({ kind: "pong", v: 1, ts: Date.now() }));
+          ws.send(JSON.stringify({ kind: "pong", v: PROTOCOL_VERSION, ts: Date.now() }));
           break;
         case "tool_result": {
           if (!authed) return;
