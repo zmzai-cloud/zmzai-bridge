@@ -47,6 +47,10 @@ export interface BridgeConfig {
   dispatchTimeoutMs: number;
   /** ECDSA(P-256) 私钥 PEM，用于签 welcome（防伪造云端端点）。缺省退化 HMAC（仅本机联调）。 */
   signingPrivateKeyPem: string | null;
+  /** 每 clientId 每分钟最大 dispatch 次数；0 = 不限（默认，生产务必显式配置） */
+  dispatchRateLimitPerMinute: number;
+  /** 审计上送的可选 JSONL 落盘路径；null = 仅内存 */
+  auditFilePath: string | null;
 }
 
 export function loadConfig(envFile = ".env"): BridgeConfig {
@@ -63,5 +67,7 @@ export function loadConfig(envFile = ".env"): BridgeConfig {
     helloMaxAgeMs: int(get("HELLO_MAX_AGE_MS", "300000"), 300_000),
     dispatchTimeoutMs: int(get("DISPATCH_TIMEOUT_MS", "120000"), 120_000),
     signingPrivateKeyPem: get("BRIDGE_SIGNING_PRIVATE_KEY_PEM", "") || null,
+    dispatchRateLimitPerMinute: int(get("DISPATCH_RATE_LIMIT_PER_MINUTE", "0"), 0),
+    auditFilePath: get("AUDIT_FILE_PATH", "") || null,
   };
 }

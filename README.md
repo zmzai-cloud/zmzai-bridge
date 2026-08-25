@@ -85,6 +85,7 @@ pnpm e2e
 | POST | `/v1/sessions/:sessionId/tool` | 向某会话下发工具请求，阻塞等待结果 |
 | POST | `/v1/clients/:clientId/tool` | 向某客户端的活跃会话下发 |
 | GET  | `/v1/users/:userId` | 查询用户当前绑定的客户端（在线/离线） |
+| GET  | `/v1/audit?limit=100` | 查询客户端上送的审计记录（跨端复盘） |
 | GET  | `/v1/clients` | 列出已连接客户端（含 userId） |
 | GET  | `/v1/sessions` | 列出会话 |
 | GET  | `/healthz` | 健康检查 |
@@ -139,8 +140,8 @@ pnpm e2e
 - [x] 非对称握手：云端私钥签 welcome（ECDSA P-256），客户端预置云端公钥验签（防伪造云端端点）。
 - [ ] 客户端密钥对接 relay apikey 体系，支持用户自助创建/吊销桥接密钥。
 - [x] 客户端声明归属 `userId`（hello 携带、签名覆盖）→ 云端按用户路由（`/v1/users/:userId/tool`）。
-- [ ] 与 relay 用户会话打通：relay 在用户登录时把 `userId ↔ agent 会话` 关联，需要本机能力时调用 `dispatchToUser`。
-- [ ] dispatch 超时默认拒绝 + Agent 侧可配重试/兜底策略。
-- [ ] 审计归集：把客户端审计日志异步上送云端存储，便于跨端复盘。
-- [ ] wss 强制 + 证书校验（生产部署必选）。
-- [ ] 限流 / 配额（按 clientId 限 dispatch 频率，防滥用）。
+- [x] 与 relay 打通：relay 暴露 `/api/internal/agent/local-tool` 按 `userId` 下发（relay + agent 已完成接入）。
+- [x] dispatch 超时默认拒绝：桥接侧 `DISPATCH_TIMEOUT_MS`（504）+ 客户端审批超时默认拒绝（`APPROVAL_TIMEOUT_MS`）。
+- [x] 审计归集：客户端经 `audit_report` 异步上送，`GET /v1/audit` 查询，可选 JSONL 落盘（`AUDIT_FILE_PATH`）。
+- [x] wss 强制 + 证书校验：客户端强制 `wss://`（除 `ALLOW_INSECURE_WS=true` 本机联调），证书校验保持严格。
+- [x] 限流 / 配额：按 clientId 限 dispatch 频率（`DISPATCH_RATE_LIMIT_PER_MINUTE`，超限 429）。

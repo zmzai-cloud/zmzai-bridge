@@ -9,6 +9,7 @@ import { WebSocket } from "ws";
 import { loadConfig } from "../src/config.js";
 import { EnvSecretStore } from "../src/bridge/secrets.js";
 import { ClientRegistry } from "../src/bridge/registry.js";
+import { AuditSink } from "../src/bridge/audit-sink.js";
 import { attachApi } from "../src/api/server.js";
 import { attachBridgeWs } from "../src/bridge/bridge-ws.js";
 import { sign, signWelcomeECDSA, verifyWelcomeECDSA } from "../src/bridge/sign.js";
@@ -31,6 +32,9 @@ process.env.PORT = String(PORT);
 process.env.HELLO_MAX_AGE_MS = "600000";
 process.env.DISPATCH_TIMEOUT_MS = "10000";
 process.env.BRIDGE_SIGNING_PRIVATE_KEY_PEM = PRIVATE_KEY_PEM;
+// e2e-client 的配额：测试1/2/3 恰好占满 3 次，测试9 验证第 4 次返回 429
+// （限流按 clientId 独立统计；离线/未绑定测试不消耗 e2e-client 的配额）。
+process.env.DISPATCH_RATE_LIMIT_PER_MINUTE = "3";
 
 function assert(cond: unknown, msg: string): void {
   if (!cond) throw new Error(`断言失败: ${msg}`);
@@ -47,10 +51,11 @@ async function waitFor<T>(p: Promise<T>, ms: number, label: string): Promise<T> 
 async function main(): Promise<void> {
   const config = loadConfig();
   const secrets = new EnvSecretStore(config.clientSecretsJson);
-  const registry = new ClientRegistry(config.dispatchTimeoutMs);
+  const registry = new ClientRegistry(config.dispatchTimeoutMs, config.dispatchRateLimitPerMinute);
+  const auditSink = new AuditSink(config.auditFilePath);
   const server = createServer();
-  attachApi(server, config, registry);
-  attachBridgeWs(server, config, registry, secrets);
+  attachApi(server, config, registry, auditSink);
+  attachBridgeWs(server, config, registry, secrets, auditSink);
 
   await new Promise<void>((res) => server.listen(PORT, res));
   console.log(`[e2e] 桥接服务已在 :${PORT} 启动（welcome=ECDSA）`);
@@ -93,6 +98,27 @@ async function main(): Promise<void> {
           return;
         }
         console.log(`[e2e] 仿真客户端已连接，session=${msg.sessionId}（welcome 验签通过）`);
+        // 模拟客户端上送一条独立审计（审计上送路径）
+        ws.send(
+          JSON.stringify({
+            kind: "audit_report",
+            v: 3,
+            clientId: CLIENT_ID,
+            userId: USER_ID,
+            audit: {
+              id: "audit-report-1",
+              clientId: CLIENT_ID,
+              tool: "notify",
+              risk: "low",
+              approved: true,
+              decidedBy: "auto",
+              startedAt: msg.ts,
+              finishedAt: Date.now(),
+              summary: "sim audit report",
+            },
+            ts: Date.now(),
+          }),
+        );
         resolve(msg.sessionId);
       }
       if (msg.kind === "tool_request") {
@@ -175,23 +201,45 @@ async function main(): Promise<void> {
     "列表中包含 userId",
   );
 
-  // ---- 测试 6：向离线客户端下发应得 409 ----
-  console.log("[e2e] 测试6: 向离线 client 下发");
-  const r6 = await fetch(`http://localhost:${PORT}/v1/clients/nobody/tool`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ tool: "notify", params: { title: "x", body: "y" } }),
-  });
-  assert(r6.status === 409, "返回 409 client_offline");
+  // ---- 测试 6：审计上送可查询 ----
+  console.log("[e2e] 测试6: GET /v1/audit 含上送记录");
+  const rAudit = await fetch(`http://localhost:${PORT}/v1/audit`);
+  const jAudit = (await rAudit.json()) as { total: number; records: { clientId: string; id: string }[] };
+  assert(rAudit.status === 200, "审计查询 200");
+  assert(jAudit.total >= 1, `审计总数 >= 1（实际 ${jAudit.total}）`);
+  assert(
+    jAudit.records.some((r) => r.clientId === CLIENT_ID && r.id === "audit-report-1"),
+    "包含客户端上送的 audit_report",
+  );
 
-  // ---- 测试 7：未绑定用户下发应得 409 ----
-  console.log("[e2e] 测试7: 向未绑定的 userId 下发");
-  const r7 = await fetch(`http://localhost:${PORT}/v1/users/nobody-user/tool`, {
+  // ---- 测试 7：向离线客户端下发应得 409 ----
+  console.log("[e2e] 测试7: 向离线 client 下发");
+  const r7 = await fetch(`http://localhost:${PORT}/v1/clients/nobody/tool`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ tool: "notify", params: { title: "x", body: "y" } }),
   });
-  assert(r7.status === 409, "未绑定用户返回 409");
+  assert(r7.status === 409, "返回 409 client_offline");
+
+  // ---- 测试 8：未绑定用户下发应得 409 ----
+  console.log("[e2e] 测试8: 向未绑定的 userId 下发");
+  const r8 = await fetch(`http://localhost:${PORT}/v1/users/nobody-user/tool`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tool: "notify", params: { title: "x", body: "y" } }),
+  });
+  assert(r8.status === 409, "未绑定用户返回 409");
+
+  // ---- 测试 9：超过每分钟配额应得 429（测试1/2/3 已占满 3 次）----
+  console.log("[e2e] 测试9: 超过限流配额返回 429");
+  const r9 = await fetch(`http://localhost:${PORT}/v1/clients/${CLIENT_ID}/tool`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tool: "notify", params: { title: "x", body: "y" } }),
+  });
+  const j9 = (await r9.json()) as { error: string };
+  assert(r9.status === 429, "返回 429 rate_limited");
+  assert(j9.error === "rate_limited", "错误码 rate_limited");
 
   server.close();
   console.log("\n[e2e] 全部通过 ✅");

@@ -33,7 +33,8 @@ export interface DispatchResult {
 export type DispatchError =
   | { code: "client_offline"; message: string }
   | { code: "timeout"; message: string }
-  | { code: "send_failed"; message: string };
+  | { code: "send_failed"; message: string }
+  | { code: "rate_limited"; message: string };
 
 type Pending = {
   clientId: string;
@@ -41,6 +42,9 @@ type Pending = {
   reject: (e: DispatchError) => void;
   timer: ReturnType<typeof setTimeout>;
 };
+
+/** 每 clientId 的滑动窗口限流状态 */
+type RateWindow = { windowStart: number; count: number };
 
 /**
  * 客户端注册表 + 会话路由 + 请求关联。
@@ -53,8 +57,12 @@ export class ClientRegistry {
   private sessions = new Map<string, string>(); // sessionId -> clientId
   private users = new Map<string, string>(); // userId -> clientId（一个用户当前在线的客户端，最新生效）
   private pending = new Map<string, Pending>();
+  private rateWindows = new Map<string, RateWindow>();
 
-  constructor(private dispatchTimeoutMs: number) {}
+  constructor(
+    private dispatchTimeoutMs: number,
+    private rateLimitPerMinute = 0,
+  ) {}
 
   /** 客户端完成握手后注册，返回分配的 sessionId；userId 建立用户绑定（最新连接覆盖旧绑定） */
   register(clientId: string, userId: string, ws: WebSocket): string {
@@ -150,8 +158,10 @@ export class ClientRegistry {
     return this.dispatchToClient(clientId, req);
   }
 
-  /** 向指定 clientId 的活跃 session 下发工具请求 */
-  async dispatchToClient(clientId: string, req: DispatchRequest): Promise<DispatchResult> {    const conn = this.clients.get(clientId);
+  /** 向指定 clientId 的活跃 session 下发工具请求（所有下发入口的统一咽喉，含限流） */
+  async dispatchToClient(clientId: string, req: DispatchRequest): Promise<DispatchResult> {
+    this.assertRateLimit(clientId);
+    const conn = this.clients.get(clientId);
     if (!conn) {
       throw { code: "client_offline", message: `客户端 ${clientId} 未连接` } as DispatchError;
     }
@@ -204,5 +214,24 @@ export class ClientRegistry {
     clearTimeout(p.timer);
     this.pending.delete(id);
     p.resolve(result);
+  }
+
+  /** 每 clientId 滑动窗口限流：rateLimitPerMinute=0 时不限。超限抛 rate_limited。 */
+  private assertRateLimit(clientId: string): void {
+    if (this.rateLimitPerMinute <= 0) return;
+    const now = Date.now();
+    const windowMs = 60_000;
+    const current = this.rateWindows.get(clientId);
+    if (!current || now - current.windowStart >= windowMs) {
+      this.rateWindows.set(clientId, { windowStart: now, count: 1 });
+      return;
+    }
+    current.count += 1;
+    if (current.count > this.rateLimitPerMinute) {
+      throw {
+        code: "rate_limited",
+        message: `客户端 ${clientId} 下发频率超过 ${this.rateLimitPerMinute} 次/分钟，请稍后重试`,
+      } as DispatchError;
+    }
   }
 }

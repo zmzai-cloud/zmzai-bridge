@@ -108,6 +108,15 @@ export const Envelope = z.discriminatedUnion("kind", [
     error: z.string().optional(),
     audit: AuditRecord,
   }),
+  /** 客户端 → 云端：异步审计上送（每次工具执行后携带审计记录，用于跨端复盘） */
+  z.object({
+    kind: z.literal("audit_report"),
+    v: z.literal(PROTOCOL_VERSION),
+    clientId: z.string().min(1),
+    userId: z.string().min(1),
+    audit: AuditRecord,
+    ts: z.number().int().positive(),
+  }),
   z.object({ kind: z.literal("ping"), v: z.literal(PROTOCOL_VERSION), ts: z.number().int().positive() }),
   z.object({ kind: z.literal("pong"), v: z.literal(PROTOCOL_VERSION), ts: z.number().int().positive() }),
 ]);

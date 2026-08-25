@@ -1,6 +1,7 @@
 import type { Server, IncomingMessage, ServerResponse } from "node:http";
 import { ToolName, RiskLevel } from "../shared/protocol.js";
 import { ClientRegistry, type DispatchError, type DispatchRequest } from "../bridge/registry.js";
+import { AuditSink } from "../bridge/audit-sink.js";
 import type { BridgeConfig } from "../config.js";
 
 interface JsonBody {
@@ -45,6 +46,8 @@ function statusForError(e: DispatchError): number {
       return 502;
     case "timeout":
       return 504;
+    case "rate_limited":
+      return 429;
   }
 }
 
@@ -64,6 +67,7 @@ export function attachApi(
   server: Server,
   config: BridgeConfig,
   registry: ClientRegistry,
+  auditSink: AuditSink,
 ): void {
   server.on("request", async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -100,6 +104,15 @@ export function attachApi(
       // 列出会话
       if (req.method === "GET" && p === "/v1/sessions") {
         return sendJson(res, 200, { sessions: registry.listSessions() });
+      }
+
+      // 审计查询：GET /v1/audit?limit=100（客户端经 audit_report 上送，用于跨端复盘）
+      if (req.method === "GET" && p === "/v1/audit") {
+        const limit = Number(url.searchParams.get("limit") ?? "100");
+        return sendJson(res, 200, {
+          total: auditSink.count(),
+          records: auditSink.recent(Number.isFinite(limit) ? limit : 100),
+        });
       }
 
       // 查询用户当前绑定的客户端：GET /v1/users/:userId

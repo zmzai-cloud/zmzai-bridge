@@ -3,6 +3,7 @@ import { Envelope, PROTOCOL_VERSION } from "../shared/protocol.js";
 import { signWelcome, signWelcomeECDSA, verifyHello } from "./sign.js";
 import { ClientRegistry } from "./registry.js";
 import { SecretStore } from "./secrets.js";
+import { AuditSink } from "./audit-sink.js";
 import type { BridgeConfig } from "../config.js";
 
 const HEARTBEAT_MS = 25_000;
@@ -19,6 +20,7 @@ export function attachBridgeWs(
   config: BridgeConfig,
   registry: ClientRegistry,
   secrets: SecretStore,
+  auditSink: AuditSink,
 ): void {
   const wss = new WebSocketServer({ noServer: true });
   const pathname = config.bridgePath;
@@ -131,6 +133,11 @@ export function attachBridgeWs(
             error: env.error,
             audit: env.audit,
           });
+          break;
+        }
+        case "audit_report": {
+          if (!authed) return;
+          auditSink.append(env.audit);
           break;
         }
         default:
